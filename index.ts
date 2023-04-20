@@ -13,7 +13,8 @@ connector.on("connect", async (data: LCU.ConnectorData) => {
   const lcuApi = new LCUController(data);
   const socket = new SuperSocket(data);
   const twitch = new TwitchManager(clientInfo);
-  twitch.init(lcuApi).catch(console.error);
+
+  await twitch.init(lcuApi);
 
   console.log("LCU data loaded");
   console.log(data);

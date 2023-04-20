@@ -1,4 +1,6 @@
 import Axios from "axios";
+import http from "http";
+import qs from "querystring";
 import * as fs from "fs";
 import * as path from "path";
 import * as tmi from "tmi.js";
@@ -10,62 +12,117 @@ import { UserQueue } from "./queue";
 class TokenManager {
   private clientInfo: Twitch.Client;
   private tokenPath: string;
-  private token: Twitch.Token;
+  private userAccessToken: Twitch.UserAccessToken;
 
   constructor(clientInfo: Twitch.Client) {
     this.clientInfo = clientInfo;
     this.tokenPath = path.join(process.cwd(), "static", "token.json");
-    this.token = this.readTokenFile();
-
-    console.dir(this.token);
+    this.readTokenFile().then(token => {
+      this.userAccessToken = token;
+      console.dir(this.userAccessToken);
+    });
   }
 
-  private readTokenFile(): Twitch.Token {
+  private async readTokenFile(): Promise<Twitch.UserAccessToken> {
     const isExists = fs.existsSync(this.tokenPath);
 
     if (isExists) {
-      const data: Twitch.Api.RefreshToken.Response = JSON.parse(fs.readFileSync(this.tokenPath, "utf-8"));
+      const token: Twitch.UserAccessToken = JSON.parse(fs.readFileSync(this.tokenPath, "utf-8"));
 
       console.log("Load token from file");
-      return {
-        accessToken: data.access_token,
-        refreshToken: data.refresh_token,
-        scope: data.scope,
-        tokenType: data.token_type
-      };
+      return token;
     } else {
-      throw new Error("Token file doesn't exists");
+      console.log("Token file doesn't exists");
+
+      const code = await this.getUserAuthCode();
+      return await this.generateToken(code);
     }
   }
 
-  private writeTokenFile(data: Twitch.Api.RefreshToken.Response) {
+  private writeTokenFile(data: Twitch.UserAccessToken) {
     console.log("write token file");
     fs.writeFileSync(this.tokenPath, JSON.stringify(data));
   }
 
-  public async getToken(): Promise<string> {
+  private getUserAuthUrl() {
+    const params: Twitch.Api.AuthUser.Request = {
+      client_id: this.clientInfo.clientId,
+      redirect_uri: this.clientInfo.redirectUri,
+      response_type: "code",
+      scope: ["chat:read", "chat:edit"].join(" "),
+      force_verify: true
+    };
+
+    return Twitch.Uri.Auth + `?${qs.stringify(Object.assign(params))}`;
+  }
+
+  private getUserAuthCode(): Promise<string> {
+    return new Promise(resolve => {
+      const server = new http.Server(async (req, res) => {
+        if (req.url) {
+          const { code, error } = qs.parse(req.url.replace("/?", ""));
+
+          if (error || code === undefined) {
+            return;
+          } else if (Array.isArray(code)) {
+            console.error(`auth code is not a string: ${code}`);
+            return;
+          }
+
+          res.writeHead(200).end();
+          server.close();
+          resolve(code);
+        }
+      });
+
+      const redirectUri = new URL(this.clientInfo.redirectUri);
+      const { hostname, port } = redirectUri;
+
+      server.listen({ host: hostname, port }, () => {
+        console.log(this.getUserAuthUrl());
+        console.log(`Port ${port} is listening`);
+      });
+    });
+  }
+
+  public async generateToken(code: string): Promise<Twitch.UserAccessToken> {
+    const data: Twitch.Api.GenerateToken.Request = {
+      client_id: this.clientInfo.clientId,
+      client_secret: this.clientInfo.clientSecret,
+      code,
+      grant_type: "authorization_code",
+      redirect_uri: this.clientInfo.redirectUri
+    };
+
+    const response = await Axios.postForm(Twitch.Uri.Token, data);
+
+    const {
+      access_token: accessToken,
+      refresh_token: refreshToken,
+      scope
+    } = response.data as Twitch.Api.GenerateToken.Response;
+
+    const token = { accessToken, refreshToken, scope };
+
+    this.writeTokenFile(token);
+    return token;
+  }
+
+  public async getToken(): Promise<Twitch.UserAccessToken> {
     const validation = await this.validateToken();
 
     if (!validation) {
       console.log("Try to refresh token");
-
-      const token = await this.refreshToken({
-        client_id: this.clientInfo.clientId,
-        client_secret: this.clientInfo.clientSecret,
-        grant_type: "refresh_token",
-        refresh_token: this.token.refreshToken
-      });
-
-      this.token = token;
+      this.userAccessToken = await this.refreshToken();
     }
 
-    return this.token.accessToken;
+    return this.userAccessToken;
   }
 
   private async validateToken(): Promise<boolean> {
     try {
-      const response = await Axios.get(Twitch.TokenValidateUri, {
-        headers: { Authorization: `OAuth ${this.token.accessToken}` }
+      const response = await Axios.get(Twitch.Uri.ValidateToken, {
+        headers: { Authorization: `OAuth ${this.userAccessToken.accessToken}` }
       });
 
       return response.status === 200;
@@ -75,25 +132,31 @@ class TokenManager {
     }
   }
 
-  private async refreshToken(data: Twitch.Api.RefreshToken.Request) {
-    const response = await Axios.post(Twitch.TokenUri, data, {
-      headers: { "Content-Type": "application/x-www-form-urlencoded" }
-    });
+  private async refreshToken(): Promise<Twitch.UserAccessToken> {
+    const data: Twitch.Api.RefreshToken.Request = {
+      client_id: this.clientInfo.clientId,
+      client_secret: this.clientInfo.clientSecret,
+      grant_type: "refresh_token",
+      refresh_token: this.userAccessToken.refreshToken
+    };
+
+    const response = await Axios.postForm(Twitch.Uri.Token, data);
 
     const {
       access_token: accessToken,
       refresh_token: refreshToken,
-      scope,
-      token_type: tokenType
+      scope
     } = response.data as Twitch.Api.RefreshToken.Response;
 
-    this.writeTokenFile(response.data);
-    return { accessToken, refreshToken, scope, tokenType };
+    const token = { accessToken, refreshToken, scope };
+
+    this.writeTokenFile(token);
+    return token;
   }
 }
 
 export class TwitchManager {
-  private readonly adminId: string;
+  private adminId: string;
   private clientInfo: Twitch.Client;
   private tokenManager: TokenManager;
   private chatClient!: tmi.Client;
@@ -101,7 +164,6 @@ export class TwitchManager {
   private lcuApi: LCUController;
 
   constructor(clientInfo: Twitch.Client) {
-    this.adminId = clientInfo.adminId;
     this.clientInfo = clientInfo;
     this.tokenManager = new TokenManager(this.clientInfo);
     this.queue = new UserQueue();
@@ -110,11 +172,14 @@ export class TwitchManager {
   public async init(lcuApi: LCUController) {
     const token = await this.tokenManager.getToken();
 
+    this.adminId = await this.getUserId(token, this.clientInfo.username);
+    console.log("adminId:", this.adminId);
+
     this.lcuApi = lcuApi;
     this.chatClient = new tmi.Client({
       identity: {
         username: this.clientInfo.username,
-        password: token
+        password: token.accessToken
       },
       channels: [this.clientInfo.username]
     });
@@ -168,6 +233,16 @@ export class TwitchManager {
     await this.chatClient.connect();
 
     return this;
+  }
+
+  public async getUserId(token: Twitch.UserAccessToken, login: string): Promise<string> {
+    const uri = Twitch.Uri.GetUsers + `?${qs.stringify({ login })}`;
+    const data = await Axios.get(uri, {
+      headers: { Authorization: `Bearer ${token.accessToken}`, "Client-Id": this.clientInfo.clientId }
+    });
+    const { data: response }: { data: Twitch.Api.GetUsers.Response } = data;
+
+    return response.data[0].id;
   }
 
   public getNextQueue() {
