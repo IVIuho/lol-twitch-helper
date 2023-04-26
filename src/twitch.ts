@@ -15,15 +15,28 @@ class TokenManager {
   private userAccessToken: Twitch.UserAccessToken;
 
   constructor(clientInfo: Twitch.Client) {
-    this.clientInfo = clientInfo;
+    this.clientInfo = this.validateClientInfo(clientInfo);
     this.tokenPath = path.join(process.cwd(), "static", "token.json");
     this.readTokenFile().then(token => {
-      this.userAccessToken = token;
-      console.dir(this.userAccessToken);
+      if (token !== null) {
+        this.userAccessToken = token;
+        console.dir(this.userAccessToken);
+      }
     });
   }
 
-  private async readTokenFile(): Promise<Twitch.UserAccessToken> {
+  private validateClientInfo(clientInfo: Twitch.Client) {
+    // eslint-disable-next-line no-unused-vars
+    const { channels, ...data } = clientInfo;
+
+    if (clientInfo === undefined || Object.values(data).some(v => v === undefined || v === "")) {
+      throw Error("client info is invalid");
+    }
+
+    return clientInfo;
+  }
+
+  private async readTokenFile(): Promise<Twitch.UserAccessToken | null> {
     const isExists = fs.existsSync(this.tokenPath);
 
     if (isExists) {
@@ -33,9 +46,7 @@ class TokenManager {
       return token;
     } else {
       console.log("Token file doesn't exists");
-
-      const code = await this.getUserAuthCode();
-      return await this.generateToken(code);
+      return null;
     }
   }
 
@@ -109,14 +120,23 @@ class TokenManager {
   }
 
   public async getToken(): Promise<Twitch.UserAccessToken> {
-    const validation = await this.validateToken();
+    if (this.userAccessToken) {
+      const validation = await this.validateToken();
 
-    if (!validation) {
-      console.log("Try to refresh token");
-      this.userAccessToken = await this.refreshToken();
+      if (!validation) {
+        console.log("Try to refresh token in getting token progress");
+        this.userAccessToken = await this.refreshToken();
+      }
+
+      return this.userAccessToken;
+    } else {
+      console.log("Try to generate token in getting token progress");
+
+      const code = await this.getUserAuthCode();
+      this.userAccessToken = await this.generateToken(code);
+
+      return this.userAccessToken;
     }
-
-    return this.userAccessToken;
   }
 
   private async validateToken(): Promise<boolean> {
@@ -133,6 +153,10 @@ class TokenManager {
   }
 
   private async refreshToken(): Promise<Twitch.UserAccessToken> {
+    if (this.userAccessToken === undefined || this.userAccessToken.refreshToken !== "") {
+      throw new Error(`token is empty: ${this.userAccessToken}`);
+    }
+
     const data: Twitch.Api.RefreshToken.Request = {
       client_id: this.clientInfo.clientId,
       client_secret: this.clientInfo.clientSecret,
@@ -181,7 +205,7 @@ export class TwitchManager {
         username: this.clientInfo.username,
         password: token.accessToken
       },
-      channels: [this.clientInfo.username]
+      channels: this.clientInfo.channels
     });
 
     this.chatClient.on("connected", (address, port) => {

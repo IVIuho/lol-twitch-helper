@@ -3,6 +3,7 @@ export interface Client {
   clientId: string;
   clientSecret: string;
   redirectUri: string;
+  channels: string[];
 }
 
 export interface UserAccessToken {

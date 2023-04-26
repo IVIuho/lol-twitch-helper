@@ -2,5 +2,6 @@
   "username": "",
   "clientId": "",
   "clientSecret": "",
-  "redirectUri": ""
+  "redirectUri": "",
+  "channels": []
 }
