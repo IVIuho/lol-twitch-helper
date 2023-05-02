@@ -6,7 +6,7 @@ import * as path from "path";
 import * as tmi from "tmi.js";
 
 import * as Twitch from "../types/twitch";
-import { LCUController } from "./lcu";
+import { LCUApiController } from "./lcu";
 import { UserQueue } from "./queue";
 
 class TokenManager {
@@ -153,7 +153,7 @@ class TokenManager {
   }
 
   private async refreshToken(): Promise<Twitch.UserAccessToken> {
-    if (this.userAccessToken === undefined || this.userAccessToken.refreshToken !== "") {
+    if (this.userAccessToken === undefined || this.userAccessToken.refreshToken === "") {
       throw new Error(`token is empty: ${this.userAccessToken}`);
     }
 
@@ -185,7 +185,7 @@ export class TwitchManager {
   private tokenManager: TokenManager;
   private chatClient!: tmi.Client;
   private queue: UserQueue;
-  private lcuApi: LCUController;
+  private lcuApi: LCUApiController;
 
   constructor(clientInfo: Twitch.Client) {
     this.clientInfo = clientInfo;
@@ -193,7 +193,7 @@ export class TwitchManager {
     this.queue = new UserQueue();
   }
 
-  public async init(lcuApi: LCUController) {
+  public async init(lcuApi: LCUApiController) {
     const token = await this.tokenManager.getToken();
 
     this.adminId = await this.getUserId(token, this.clientInfo.username);
@@ -257,6 +257,21 @@ export class TwitchManager {
     await this.chatClient.connect();
 
     return this;
+  }
+
+  public async close() {
+    const state = this.chatClient.readyState();
+    const channels = this.chatClient.getChannels();
+
+    if (state !== "CLOSED") {
+      await Promise.all(
+        channels.map(channel => {
+          this.chatClient.say(channel, `채팅과 연결이 끊겼습니다.`);
+        })
+      );
+
+      await this.chatClient.disconnect();
+    }
   }
 
   public async getUserId(token: Twitch.UserAccessToken, login: string): Promise<string> {
@@ -325,7 +340,9 @@ export class TwitchManager {
         } else {
           this.chatClient.say(
             channel,
-            `@${author.nickname} 대기열의 닉네임을 "${prev.gameNick}"에서 "${next.gameNick}"으로 수정했습니다. 현재 대기 번호는 ${index}번입니다.`
+            `@${author.nickname} 대기열의 닉네임을 "${prev.gameNick}"에서 "${
+              next.gameNick
+            }"으로 수정했습니다. 현재 대기 번호는 ${index + 1}번입니다.`
           );
         }
       } else {
@@ -371,7 +388,7 @@ export class TwitchManager {
     const [from, to] = args.map(Number);
 
     if (from && to) {
-      const [target] = this.queue.changeOrder(from - 1, to - 1);
+      const target = this.queue.changeOrder(from - 1, to - 1);
 
       this.chatClient.say(channel, `${from}번째 대기자(${target.nickname})를 ${to}번째 순서로 옮겼습니다.`);
     } else {

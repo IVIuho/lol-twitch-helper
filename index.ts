@@ -3,25 +3,26 @@ import LCUConnector from "lcu-connector";
 import clientInfo from "./static/client.json";
 import * as LCU from "./types/lcu";
 import * as RiotProtocol from "./types/riot";
-import { LCUController } from "./src/lcu";
-import { SuperSocket } from "./src/websocket";
+import { LCUApiController } from "./src/lcu";
+import { LeagueClientSocket } from "./src/websocket";
 import { TwitchManager } from "./src/twitch";
 
 const connector = new LCUConnector();
+const twitch = new TwitchManager(clientInfo);
+
+let lcuApi: LCUApiController;
+let socket: LeagueClientSocket;
 
 connector.on("connect", async (data: LCU.ConnectorData) => {
-  const lcuApi = new LCUController(data);
-  const socket = new SuperSocket(data);
-  const twitch = new TwitchManager(clientInfo);
-
-  await twitch.init(lcuApi);
-
   console.log("LCU data loaded");
   console.log(data);
 
-  socket.on("open", () => {
-    console.log("websocket open");
+  await twitch.init(lcuApi);
 
+  lcuApi = new LCUApiController(data);
+  socket = new LeagueClientSocket(data);
+
+  socket.onOpen(() => {
     socket.subscribe(RiotProtocol.Topic.Lobby, async (payload: RiotProtocol.Payload) => {
       const { eventType, uri } = payload;
 

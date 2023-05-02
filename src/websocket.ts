@@ -3,22 +3,23 @@ import { WebSocket } from "ws";
 import * as LCU from "../types/lcu";
 import * as RiotProtocol from "../types/riot";
 
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+export class LeagueClientSocket {
+  private connection: WebSocket;
+  private url: string;
 
-export class SuperSocket extends WebSocket {
   constructor(data: LCU.ConnectorData) {
     const { address, port, username, password } = data;
     const url = `wss://${username}:${password}@${address}:${port}`;
 
-    super(url, {
-      rejectUnauthorized: false,
-      timeout: 5000
-    });
-
-    this.on("message", this._onMessage.bind(this));
+    this.url = url;
+    this.connect(url);
   }
 
-  private _onMessage(message: Buffer) {
+  get state() {
+    return this.connection.readyState;
+  }
+
+  private onMessage(message: Buffer) {
     if (!message.toString()) return;
 
     const [type, topic, payload] = JSON.parse(message.toString());
@@ -26,7 +27,7 @@ export class SuperSocket extends WebSocket {
     switch (type) {
       case RiotProtocol.MessageType.Event:
         console.log(topic, payload.eventType, payload.uri);
-        this.emit(topic, payload);
+        this.connection.emit(topic, payload);
         break;
       case RiotProtocol.MessageType.Welcome:
       case RiotProtocol.MessageType.Prefix:
@@ -42,13 +43,43 @@ export class SuperSocket extends WebSocket {
     }
   }
 
+  private connect(url: string) {
+    if (this.connection) {
+      this.connection.close();
+      console.log("Try to reconnect websocket");
+    }
+
+    this.connection = new WebSocket(url, {
+      rejectUnauthorized: false,
+      timeout: 3000
+    });
+
+    this.connection.on("open", () => console.log("Websocket opened"));
+    this.connection.on("close", code => {
+      console.log("Websocket closed:", code);
+
+      switch (code) {
+        case 1006:
+          setTimeout(this.connect.bind(this), 1000, this.url);
+          break;
+      }
+    });
+
+    this.connection.on("message", this.onMessage.bind(this));
+  }
+
+  public onOpen(listener: () => void) {
+    return this.connection.on("open", listener);
+  }
+
+  // eslint-disable-next-line no-unused-vars
   public subscribe(topic: string, handler: (payload: any) => void) {
-    this.on(topic, handler);
+    this.connection.on(topic, handler);
     this.sendData(RiotProtocol.MessageType.Subscribe, topic);
   }
 
   public unsubscribe(topic: string) {
-    this.off(topic, () => {
+    this.connection.off(topic, () => {
       console.log(`Unsubscribe topic ${topic}`);
     });
 
@@ -56,9 +87,9 @@ export class SuperSocket extends WebSocket {
   }
 
   public sendData(type: RiotProtocol.MessageType, message: string) {
-    this.send(JSON.stringify([type, message]), e => {
-      if (e) console.log("websocket send error:", RiotProtocol.MessageType[type], message);
-      else console.log("websocket send success:", RiotProtocol.MessageType[type], message);
+    this.connection.send(JSON.stringify([type, message]), e => {
+      if (e) console.log("Websocket send error:", RiotProtocol.MessageType[type], message);
+      else console.log("Websocket send success:", RiotProtocol.MessageType[type], message);
     });
   }
 }

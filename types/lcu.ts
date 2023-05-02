@@ -14,12 +14,17 @@ export enum HTTPMethod {
 }
 
 export enum EndPoint {
+  AppName = "/riotclient/app-name",
   Invitations = "/lol-lobby/v2/lobby/invitations",
   Lobby = "/lol-lobby/v2/lobby",
   Summoner = "/lol-summoner/v1/summoners"
 }
 
 export namespace Api {
+  export namespace GetAppName {
+    export type Response = string;
+  }
+
   export namespace GetSummoner {
     export interface Response {
       accountId: number;

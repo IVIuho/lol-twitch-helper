@@ -77,6 +77,8 @@ export class UserQueue {
 
   public changeOrder(from: number, to: number) {
     const [target] = this.queue.splice(from, 1);
-    return this.queue.splice(to, 0, target);
+
+    this.queue.splice(to, 0, target);
+    return target;
   }
 }

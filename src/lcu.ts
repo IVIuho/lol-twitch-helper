@@ -3,7 +3,7 @@ import https from "https";
 
 import * as LCU from "../types/lcu";
 
-export class LCUController {
+export class LCUApiController {
   private axios: AxiosInstance;
   private url: string;
 
@@ -35,6 +35,12 @@ export class LCUController {
       console.error(e?.response?.data);
       return null;
     }
+  }
+
+  public async getAppName(): Promise<LCU.Api.GetAppName.Response> {
+    const response = await this._request(LCU.HTTPMethod.Get, LCU.EndPoint.AppName);
+
+    return response;
   }
 
   public async getSummoner(nickname: string): Promise<LCU.Api.GetSummoner.Response> {
